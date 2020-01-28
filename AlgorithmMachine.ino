@@ -11,9 +11,6 @@
 //     2 for LED strips
 //     2 for 7 seg display
 
-// Pins: 21, TX0(1), RX1(3), 22, 19, 23, 18, 5, 15, 2, 0, 4, 17, 16
-//       36, 37, 38, 39, 32, 33, 34, 35, 25, 26, 27, 14, 12, 13
-
 #define STEP_CLK 18
 #define STEP_DIO 19
 
@@ -116,6 +113,7 @@ int gValues[NUM_LEDS];
 // -- Actual colors that are sent to the LEDs
 CRGB gValueLEDs[NUM_LEDS];
 CRGB gIndicatorLEDs[NUM_LEDS];
+bool gWorkingOn[NUM_LEDS];
 
 CRGBPalette16 gPal;
 
@@ -134,6 +132,8 @@ void convert_values()
         else {
             int hue = map(val, 0, MAX_VAL, 0, 200);
             gValueLEDs[i] = ColorFromPalette(gPal, hue);
+            if ( ! gWorkingOn[i])
+                gValueLEDs[i].fadeToBlackBy(225);
         }
     }
 }
@@ -145,13 +145,6 @@ void show(bool update_values)
     FastLED.show();
 }
 
-void clear_values()
-{
-    for (int i = 0; i < NUM_LEDS; i++) {
-        gValues[i] = BLACK;
-    }
-}
-
 void clear_indicators()
 {
     for (int i = 0; i < NUM_LEDS; i++) {
@@ -159,10 +152,17 @@ void clear_indicators()
     }
 }
 
-void set_indicators(int start, int finish, CRGB color)
+void clear_working_on()
 {
-    for (int i = start; i <= finish; i++) {
-        gIndicatorLEDs[i]  = color;
+    for (int i = 0; i < NUM_LEDS; i++) {
+        gWorkingOn[i] = true;
+    }
+}
+
+void working_on(int start, int finish)
+{
+    for (int i = 0; i < NUM_LEDS; i++) {
+        gWorkingOn[i] = (i >= start and i <= finish);
     }
 }
 
@@ -171,8 +171,8 @@ void set_indicators(int start, int finish, CRGB color)
 #define MAX_SPEED 150
 volatile int gSpeed = 15;
 
-#define STEP_SPEED_CUTOFF 50
-#define DISPLAY_SPEED_CUTOFF 100
+#define STEP_SPEED_CUTOFF 30
+#define DISPLAY_SPEED_CUTOFF 90
 
 volatile bool B_fell = false;
 volatile bool B_must_rise = false;
@@ -187,7 +187,7 @@ void doEncoderA()
         A_fell = true;
         if (B_fell and not B_must_rise) {
             // -- A just fell, B already fell
-            gSpeed -= 3;
+            gSpeed = gSpeed - 3;
             if (gSpeed < 1) gSpeed = 1;
             Serial.println(gSpeed);
             A_must_rise = true;
@@ -207,7 +207,7 @@ void doEncoderB()
         B_fell = true;
         if (A_fell and not A_must_rise) {
             // -- B just fell, A already fell
-            gSpeed += 3;
+            gSpeed = gSpeed + 3;
             if (gSpeed > MAX_SPEED) gSpeed = MAX_SPEED;
             Serial.println(gSpeed);
             A_must_rise = true;
@@ -226,7 +226,9 @@ TM1637Display gStepDisplay(STEP_CLK, STEP_DIO);
 
 void display_step()
 {
-    if (gSpeed < STEP_SPEED_CUTOFF || gStep % 10 == 0) {
+    if (gSpeed < STEP_SPEED_CUTOFF or 
+        (gSpeed < DISPLAY_SPEED_CUTOFF and gStep % 10 == 0) or
+        (gStep % 100 == 0)) {
         gStepDisplay.showNumberDec(gStep, true);
     }
 }
@@ -242,6 +244,10 @@ void step()
 void generate_random()
 {
     for (int i = 0; i < NUM_LEDS; i++) {
+        gValues[i] = BLACK;
+    }
+    
+    for (int i = 0; i < NUM_LEDS; i++) {
         int val = random16( MAX_VAL );
         gValues[i] = val;
         show(true);
@@ -250,8 +256,10 @@ void generate_random()
 
 void add_noise()
 {
+    clear_indicators();
     int which = random16(NUM_LEDS);
     int val = random16( MAX_VAL );
+    gIndicatorLEDs[which] = CRGB::Orange;
     gValues[which] = val;
     show(true);
 }
@@ -330,7 +338,7 @@ bool binary_search()
         }
     }
     
-    set_indicators(0, NUM_LEDS, CRGB::Aqua);
+    //set_indicators(0, NUM_LEDS, CRGB::Aqua);
 
     while (low <= high and not found) {
         step();
@@ -367,9 +375,15 @@ bool binary_search()
 
 bool swap(int i, int j)
 {
-    gIndicatorLEDs[i] = CRGB::Red;
-    gIndicatorLEDs[j] = CRGB::Red;
+    if (gSpeed < STEP_SPEED_CUTOFF) {
+        gIndicatorLEDs[i] = CRGB::Red;
+        gIndicatorLEDs[j] = CRGB::Red;
+        SHOWFRAME(false);
+    }
 
+    gIndicatorLEDs[i] = CRGB::Yellow;
+    gIndicatorLEDs[j] = CRGB::Yellow;
+        
     int temp = gValues[i];
     gValues[i] = gValues[j];
     gValues[j] = temp;
@@ -378,12 +392,6 @@ bool swap(int i, int j)
         SHOWFRAME(true);
     } else {
         WAITFRAME;
-    }
-
-    if (gSpeed < STEP_SPEED_CUTOFF) {
-        gIndicatorLEDs[i] = CRGB::Green;
-        gIndicatorLEDs[j] = CRGB::Green;
-        SHOWFRAME(false);
     }
 
     gIndicatorLEDs[i] = CRGB::Black;
@@ -395,8 +403,8 @@ bool swap(int i, int j)
 bool dont_swap(int i, int j)
 {
     if (gSpeed < DISPLAY_SPEED_CUTOFF) {
-        gIndicatorLEDs[i] = CRGB::Green;
-        gIndicatorLEDs[j] = CRGB::Green;
+        gIndicatorLEDs[i] = CRGB::Yellow;
+        gIndicatorLEDs[j] = CRGB::Yellow;
     
         SHOWFRAME(false);
         if (gSpeed < STEP_SPEED_CUTOFF) {
@@ -416,6 +424,10 @@ bool bubble_sort()
 {
     for (int i = 0; i < NUM_LEDS - 1; i++) {
         bool did_swap = false;
+
+        working_on(0, NUM_LEDS - i);
+        show(true);
+        
         for (int j = 0; j < (NUM_LEDS - i) - 1; j++) {
             step();
             if (gValues[j] > gValues[j + 1]) {
@@ -424,30 +436,68 @@ bool bubble_sort()
             } else
                 CALL( dont_swap(j, j + 1) );
         }
-        if (gSpeed >= DISPLAY_SPEED_CUTOFF) {
-            SHOWFRAME(true);
-        }
+        
         if ( ! did_swap ) break;
     }
     return false;
 }
 
-void insertion_sort(int * array, int size)
+bool insertion_sort()
 {
-    for (int i = 1; i < size; i++) {
-        int key = array[i];
+    for (int i = 0; i < NUM_LEDS; i++) {
+        working_on(0, i);
+        step();
+
+        int key = gValues[i];
+        gIndicatorLEDs[i] = CRGB::Yellow;
+        SHOWFRAME(true);
+        
         int j = i;
-        while (j > 0 && array[j - 1] > key) {
-            array[j] = array[j - 1];
-            j--;
+        while (j > 0 && gValues[j - 1] > key) {
+            step();
+            gIndicatorLEDs[j] = CRGB::Black;
+            gIndicatorLEDs[j-1] = CRGB::Yellow;
+            gValues[j] = gValues[j-1];
+            gValues[j-1] = key;
+            if (gSpeed < DISPLAY_SPEED_CUTOFF) {
+                SHOWFRAME(true);
+            } else {
+                WAITFRAME;
+            }
+            
+            j = j - 1;
         }
-        array[j] = key;   //insert in right place
+
+        gIndicatorLEDs[j] = CRGB::Yellow;
+        gValues[j] = key;
+        SHOWFRAME(true);
+        gIndicatorLEDs[j] = CRGB::Black;
+    }
+
+    return false;
+}
+
+int choose_pivot(int low, int high)
+{
+    if (high - low >= 2) {
+        int a = gValues[low];
+        int b = gValues[low+1];
+        int c = gValues[low+2];
+        
+        if ((a < b && b < c) || (c < b && b < a)) 
+            return low+1;
+        else if ((b < a && a < c) || (c < a && a < b)) 
+            return low;
+        else
+            return low+2;
+    } else {
+        return low;
     }
 }
 
 bool partition (int low, int high, int & pivot_pos)
 {
-    int pivot_start = low;
+    int pivot_start = choose_pivot(low, high);
     int left = low;
     int right = high;
     int pivot = gValues[pivot_start];
@@ -499,15 +549,13 @@ bool quick_sort_rec(int low, int high)
             }
         } else {
             // -- Recursive case
+            working_on(low, high);
+            show(true);
+            
             int pivotpos;
             CALL( partition(low, high, pivotpos) );
 
-            if (gSpeed >= DISPLAY_SPEED_CUTOFF) {
-                SHOWFRAME(true);
-            } else {
-                // set_indicators(low, high, CRGB::DarkBlue);
-                SHOWFRAME(false);
-            }
+            SHOWFRAME(true);
 
             CALL( quick_sort_rec(low, pivotpos - 1) );
             CALL( quick_sort_rec(pivotpos + 1, high) );
@@ -525,21 +573,24 @@ bool quick_sort()
     return false;
 }
 
-void merge(int start, int mid, int end)
+bool merge(int start, int mid, int end)
 {
     int start2 = mid + 1;
 
     // If the direct merge is already sorted
     if (gValues[mid] <= gValues[start2]) {
-        return;
+        step();
+        return false;
     }
 
     // Two pointers to maintain start
     // of both arrays to merge
     while (start <= mid && start2 <= end) {
+        step();
 
         // If element 1 is in right place
         if (gValues[start] <= gValues[start2]) {
+            CALL( dont_swap(start, start2) );
             start++;
         }
         else {
@@ -550,35 +601,68 @@ void merge(int start, int mid, int end)
             // element 2, right by 1.
             while (index != start) {
                 gValues[index] = gValues[index - 1];
+                // step();
+                // CALL( swap(index, index-1) );
                 index--;
             }
+            
+            gIndicatorLEDs[start] = CRGB::Yellow;
+            gIndicatorLEDs[start2] = CRGB::Yellow;
+            
             gValues[start] = value;
 
+            if (gSpeed < DISPLAY_SPEED_CUTOFF) {
+                SHOWFRAME(true);
+            } else {
+                WAITFRAME;
+            }
+        
+            gIndicatorLEDs[start] = CRGB::Black;
+            gIndicatorLEDs[start2] = CRGB::Black;
+            
             // Update all the pointers
             start++;
             mid++;
             start2++;
         }
     }
+
+    return false;
 }
 
 /* l is for left index and r is right index of the
    sub-array of arr to be sorted */
 
-void merge_sort(int l, int r)
+bool merge_sort_rec(int l, int r)
 {
     if (l < r) {
+
+        working_on(l, r);
+        show(true);
 
         // Same as (l + r) / 2, but avoids overflow
         // for large l and r
         int m = l + (r - l) / 2;
 
         // Sort first and second halves
-        merge_sort(l, m);
-        merge_sort(m + 1, r);
+        CALL( merge_sort_rec(l, m) );
+        CALL( merge_sort_rec(m + 1, r) );
 
-        merge(l, m, r);
+        working_on(l, r);
+        show(true);
+
+        CALL( merge(l, m, r) );
     }
+
+    return false;
+}
+
+bool merge_sort()
+{
+    int low = 0;
+    int high = NUM_LEDS - 1;
+    CALL( merge_sort_rec(low, high));
+    return false;
 }
 
 // -----------------------------------------------------------------
@@ -597,8 +681,6 @@ void setup()
 
     pinMode(SPEED_A_PIN, INPUT);
     pinMode(SPEED_B_PIN, INPUT);
-    encoder.setCount(20);
-    encoder.attachHalfQuad(SPEED_A_PIN, SPEED_B_PIN);
 
     for (int i = 0; i < NUM_BUTTONS; i++) {
         pinMode(gButtons[i].pin, INPUT);
@@ -614,25 +696,29 @@ void setup()
     FastLED.addLeds<WS2812, INDICATORS_LED_PIN, GRB>(gIndicatorLEDs, NUM_LEDS).setCorrection( TypicalLEDStrip );
     FastLED.setBrightness(g_Brightness);
 
-    fill_solid(gValueLEDs, NUM_LEDS, CRGB::Red);
-    fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Red);
-    FastLED.show();
-    delay(1000);
-    fill_solid(gValueLEDs, NUM_LEDS, CRGB::Green);
-    fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Green);
-    FastLED.show();
-
     gStepDisplay.setBrightness(0x0a);
     gStepDisplay.showNumberDec(9999, true);
 
-    delay(1000);
+    fill_solid(gValueLEDs, NUM_LEDS, CRGB::Red);
+    fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Red);
+    FastLED.show();
+    delay(400);
+    fill_solid(gValueLEDs, NUM_LEDS, CRGB::Blue);
+    fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Blue);
+    FastLED.show();
+    delay(400);
+    fill_solid(gValueLEDs, NUM_LEDS, CRGB::Green);
+    fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Green);
+    FastLED.show();
+    delay(400);
     fill_solid(gValueLEDs, NUM_LEDS, CRGB::Black);
     fill_solid(gIndicatorLEDs, NUM_LEDS, CRGB::Black);
     FastLED.show();
+    delay(400);
 
-    clear_values();
     clear_indicators();
-    show(true);
+    clear_working_on();
+    generate_random();
     
     attachInterrupt(SPEED_A_PIN, doEncoderA, CHANGE);
     attachInterrupt(SPEED_B_PIN, doEncoderB, CHANGE);
@@ -696,6 +782,7 @@ bool do_control()
                 gStep = 0;
                 display_step();
                 clear_indicators();
+                clear_working_on();
                 show(false);
                 return true;
             }
@@ -725,28 +812,31 @@ void loop()
                     change = binary_search();
                     break;
                 case Reserved:
-                break;
+                    break;
                 case BubbleSort:
                     change = bubble_sort();
                     break;
                 case InsertionSort:
-                break;
+                    change = insertion_sort();
+                    break;
                 case QuickSort:
                     change = quick_sort();
                     break;
                 case MergeSort:
-                break;
+                    change = merge_sort();
+                    break;
                 case HeapSort:
-                break;
+                    break;
                 case BitonicSort:
-                break;
+                    break;
                 default:
-                break;
+                    break;
             }
             if ( ! change) {
                 // -- This means we finished the algorithm successfully
                 clear_indicators();
-                show(false);
+                clear_working_on();
+                show(true);
                 gState = STOP;
                 if (gStep > 0) {
                     uint32_t end_time = millis();
