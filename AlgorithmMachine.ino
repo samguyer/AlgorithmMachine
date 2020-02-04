@@ -133,7 +133,7 @@ void convert_values()
             int hue = map(val, 0, MAX_VAL, 0, 200);
             gValueLEDs[i] = ColorFromPalette(gPal, hue);
             if ( ! gWorkingOn[i])
-                gValueLEDs[i].fadeToBlackBy(225);
+                gValueLEDs[i].fadeToBlackBy(180);
         }
     }
 }
@@ -275,6 +275,8 @@ void reverse()
 }
 
 
+// ----------------------------------------------------------------------
+//   Search algorithms
 // ----------------------------------------------------------------------
 
 bool linear_search()
@@ -420,6 +422,18 @@ bool dont_swap(int i, int j)
     return false;
 }
 
+// ----------------------------------------------------------------------
+//   Quadratic sorting algorithms
+// ----------------------------------------------------------------------
+
+/** Bubble sort
+ *  Repeatedly traverse the array comparing adjacent elements, swapping them 
+ *  if they are not in the proper order. The invariant is that elements at 
+ *  the end of the array are sorted and in the correct final position.
+ *  
+ *  Runtime: quadtratic
+ *  Steps: (N * N-1)/2 == O(N^2) 
+ */
 bool bubble_sort()
 {
     for (int i = 0; i < NUM_LEDS - 1; i++) {
@@ -442,6 +456,16 @@ bool bubble_sort()
     return false;
 }
 
+/** Insertion sort
+ *  Repeatedly insert elements in the right place in a partially sorted list 
+ *  that grows from the beginning of the array. The invariant is that elements
+ *  at the beginning of the array are sorted (but not necessarily in their
+ *  final positions).
+ *  
+ *  Runtime: quadratic in the worst case
+ *           BUT linear if only a few elements are out of place
+ *  Steps: (N * N-1)/2 == O(N^2)
+ */
 bool insertion_sort()
 {
     for (int i = 0; i < NUM_LEDS; i++) {
@@ -476,6 +500,65 @@ bool insertion_sort()
 
     return false;
 }
+
+/** Shell sort
+ *  
+ *  
+ *  
+ *  Runtime: quadtratic
+ *  Steps: O(N^2) 
+ */
+int shell_sort() 
+{ 
+    // Start with a big gap, then reduce the gap 
+    for (int gap = NUM_LEDS/2; gap > 0; gap /= 2) {
+        working_on(gap, NUM_LEDS);
+        
+        for (int i = gap; i < NUM_LEDS; i += 1) {
+            step();
+            
+            // add a[i] to the elements that have been gap sorted 
+            // save a[i] in temp and make a hole at position i 
+            int temp = gValues[i]; 
+  
+            // shift earlier gap-sorted elements up until the correct  
+            // location for a[i] is found 
+            int j = i;             
+            while (j >= gap && gValues[j - gap] > temp) {
+                step();
+                gIndicatorLEDs[j] = CRGB::Black;
+                gIndicatorLEDs[j-gap] = CRGB::Yellow;
+                gValues[j] = gValues[j-gap];
+                gValues[j-gap] = temp;
+                if (gSpeed < DISPLAY_SPEED_CUTOFF) {
+                    SHOWFRAME(true);
+                } else {
+                    WAITFRAME;
+                }
+                j = j - gap;
+            }
+        } 
+    }
+
+    return false;
+}
+
+// ----------------------------------------------------------------------
+//   NlogN sorting algorithms
+// ----------------------------------------------------------------------
+
+/** Quick sort
+ *  Divide the array into two pieces by picking a value at random (the pivot)
+ *  and moving all values greater than the pivot to one end of the array and
+ *  all the values less than the pivot to the other end. Perform the same 
+ *  process on the two piece separately, cutting the array into smaller and
+ *  smaller pieces, eventually getting down to pieces of size 2, where we either
+ *  swap the elements that are out of place, or not. Ideally, at any point the 
+ *  two pieces are of equal size, but that only happens if we choose the median
+ *  for the pivot. On average, though, we will choose "good enough" pivots, so
+ *  we still get good performance. But worse case is O(N^2) -- it degenerates
+ *  to a kind of bubble sort.
+ */
 
 int choose_pivot(int low, int high)
 {
@@ -573,6 +656,18 @@ bool quick_sort()
     return false;
 }
 
+/** Merge sort
+ *  Divide the array exactly in half, and sort the two halves separately
+ *  by calling merge sort recursively on each. Construct a completely 
+ *  sorted array by repeatedly removing the smallest value in the two 
+ *  sub-arrays and adding it to the full arary. Since the two sub-arrays
+ *  are sorted, the smallest value is either the first element in one
+ *  or the first element in the other. Merge sort is always NlogN,
+ *  although it is tricky to avoid using extra memory when performing the
+ *  merge operation.
+ *  Runtime: O(NlogN)
+ */
+
 bool merge(int start, int mid, int end)
 {
     int start2 = mid + 1;
@@ -665,9 +760,94 @@ bool merge_sort()
     return false;
 }
 
+/** Heap sort
+ *  Organize the array into a binary heap -- a structure similar to a binary
+ *  tree, but with the simple invariant that the value at each node must be
+ *  less than the value at each of its children. The smallest value in the array
+ *  will always end up as the root of the tree. We then repeatedly remove the
+ *  root, place it next in the sorted array, and fix the heap ("heapify") so that
+ *  the next smallest element is the root.
+ *  
+ *  An interesting aspect of the algorithm is that we can represent a binary tree
+ *  in an array without using any pointers/references. Each level of the tree
+ *  is laid out in the array starting with the top element. As a result, given the
+ *  index of a node i, we can find its children at position 2*i+1 and 2*i+2.
+ *  
+ *  One value can be inserted into the binary heap in logN time (the depth of the 
+ *  tree). To remove the root, we just remove one of the bottom elements and 
+ *  reinsert it into the tree. So, it requires NlogN operations to build the heap
+ *  and NlogN operations to pluck each minimum element out.
+ *  
+ *  Runtime: O(NlogN)
+ */
+ 
+bool heapify(int i) 
+{ 
+    int largest = i; // Initialize largest as root 
+    int l = 2*i + 1; // left = 2*i + 1 
+    int r = 2*i + 2; // right = 2*i + 2 
+
+    // If left child is larger than root 
+    if (l < NUM_LEDS && gValues[l] > gValues[largest]) 
+        largest = l;
+
+    // If right child is larger than largest so far 
+    if (r < NUM_LEDS && gValues[r] > gValues[largest]) 
+        largest = r;
+
+    // If largest is not root 
+    if (largest != i) {
+        CALL( swap(i, largest) ); 
+    
+        // Recursively heapify the affected sub-tree 
+        CALL( heapify(largest) );
+    }
+
+    return false;
+} 
+
+bool heap_sort() 
+{ 
+    // Build heap (rearrange array) 
+    for (int i = NUM_LEDS / 2 - 1; i >= 0; i--) {
+        CALL( heapify(i) );
+    }
+
+    // One by one extract an element from heap 
+    for (int i = NUM_LEDS-1; i>=0; i--) { 
+        // Move current root to end 
+        CALL( swap(0, i) );
+
+        // call max heapify on the reduced heap 
+        CALL( heapify(0) );
+    } 
+
+    return false;
+} 
+
+/** Bitonic sort
+ *  A weird version of merge sort that parallelizes well.
+ */
+bool bitonic_sort()
+{
+    // TBD
+    return false;
+}
+
+// ----------------------------------------------------------------------
+//   Linear sorting algorithms
+// ----------------------------------------------------------------------
+
+bool radix_sort()
+{
+    // TBD
+    return false;
+}
+
+
 // -----------------------------------------------------------------
 
-int g_Brightness = 50;
+int g_Brightness = 100;
 
 void setup()
 {
